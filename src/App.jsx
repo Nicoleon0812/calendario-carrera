@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from './supabase'
 import * as XLSX from 'xlsx'
 
-// --- CONFIGURACIÓN DE SEGURIDAD ---
-
-const DOMINIOS_PERMITIDOS = ["@alumnos.ucm.cl", "@alumn.ucm.cl", "@ucm.cl"]; 
+// --- CONFIGURACIÓN ---
+const DOMINIOS_PERMITIDOS = ["@alumnos.ucm.cl", "@alum.ucm.cl", "@ucm.cl"]; // Tus dominios
 
 const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const BLOQUES = [
@@ -14,83 +13,170 @@ const BLOQUES = [
 ];
 
 function App() {
-  // ESTADO DE SESIÓN (LOGIN)
-  const [usuario, setUsuario] = useState(null) 
+  // LOGIN
+  const [usuario, setUsuario] = useState(null)
   const [emailInput, setEmailInput] = useState("")
   const [errorLogin, setErrorLogin] = useState("")
 
-  // ESTADOS DEL CALENDARIO
+  // DATOS
   const [catalogoRamos, setCatalogoRamos] = useState([])
   const [busqueda, setBusqueda] = useState("")
   const [ramoSeleccionado, setRamoSeleccionado] = useState(null)
   const [horarioArmado, setHorarioArmado] = useState([])
   const [creditosTotales, setCreditosTotales] = useState(0)
 
+  // CARGAR CATALOGO AL INICIO
   useEffect(() => {
+    async function getAsignaturas() {
+      const { data } = await supabase.from('asignaturas').select('*').order('id')
+      if (data) setCatalogoRamos(data)
+    }
     getAsignaturas()
   }, [])
 
-  async function getAsignaturas() {
-    const { data } = await supabase.from('asignaturas').select('*').order('id')
-    if (data) setCatalogoRamos(data)
-  }
+  // --- EFECTO MAGICO: CARGAR HORARIO AL LOGUEARSE ---
+  useEffect(() => {
+    if (usuario && catalogoRamos.length > 0) {
+      cargarHorarioGuardado();
+    }
+  }, [usuario, catalogoRamos])
 
-  // --- FUNCIÓN DE LOGIN (ACTUALIZADA PARA VARIOS DOMINIOS) ---
+  async function cargarHorarioGuardado() {
+    // 1. Buscamos en la tabla 'mis_horarios' todo lo de este email
+    const { data: datosGuardados } = await supabase
+      .from('mis_horarios')
+      .select('*')
+      .eq('email', usuario)
+
+    if (datosGuardados && datosGuardados.length > 0) {
+      // 2. Reconstruimos el horario para la app
+      let creditosAcumulados = 0;
+      const horarioReconstruido = datosGuardados.map(item => {
+        // Buscamos el objeto ramo completo usando el ID que guardamos
+        const ramoCompleto = catalogoRamos.find(r => r.id === item.ramo_id);
+        
+        // Sumamos créditos (con cuidado de no sumar duplicados si el código es malo, 
+        // pero aquí solo sumamos para calcular el total inicial)
+        // Nota: Para simplificar, recalculamos abajo.
+        return {
+          id_unico: item.id, // Usamos el ID real de la base de datos
+          ramo: ramoCompleto,
+          dia: item.dia,
+          bloque: item.bloque
+        };
+      }).filter(item => item.ramo); // Filtramos si alguno no se encontró
+
+      // Calcular créditos únicos
+      const ramosUnicos = [...new Set(horarioReconstruido.map(h => h.ramo.id))];
+      ramosUnicos.forEach(id => {
+        const r = catalogoRamos.find(cata => cata.id === id);
+        if (r) creditosAcumulados += r.creditos;
+      });
+
+      setHorarioArmado(horarioReconstruido);
+      setCreditosTotales(creditosAcumulados);
+    }
+  }
+  // ----------------------------------------------------
+
   function handleLogin(e) {
     e.preventDefault(); 
+    if (!emailInput) { setErrorLogin("Escribe tu correo."); return; }
     
-    if (!emailInput) {
-      setErrorLogin("Por favor escribe tu correo.");
-      return;
-    }
-
-    // AQUI ESTA LA MAGIA: Revisa si el correo termina en ALGUNO de la lista
-    const esValido = DOMINIOS_PERMITIDOS.some(dominio => 
-      emailInput.toLowerCase().endsWith(dominio.toLowerCase())
-    );
-
-    if (!esValido) {
-      setErrorLogin(`Acceso denegado. Solo se permiten correos: ${DOMINIOS_PERMITIDOS.join(", ")}`);
-      return;
-    }
+    const esValido = DOMINIOS_PERMITIDOS.some(d => emailInput.toLowerCase().endsWith(d));
+    if (!esValido) { setErrorLogin(`Solo correos: ${DOMINIOS_PERMITIDOS.join(", ")}`); return; }
 
     setUsuario(emailInput);
-    setErrorLogin(""); 
+    setErrorLogin("");
   }
-  // -----------------------------------------------------------
 
   function toggleSeleccionRamo(ramo) {
     if (ramoSeleccionado?.id === ramo.id) setRamoSeleccionado(null)
     else setRamoSeleccionado(ramo)
   }
 
-  function colocarEnCelda(dia, bloque) {
+  // --- FUNCIÓN AGREGAR (CON GUARDADO EN BD) ---
+  async function colocarEnCelda(dia, bloque) {
     if (!ramoSeleccionado) return;
-    const ramosEnEstaCelda = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
 
-    if (ramosEnEstaCelda.length >= 2) {
-      alert("⚠️ Máximo 2 ramos por horario."); return;
-    }
+    // Validaciones locales
+    const ramosEnEstaCelda = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
+    if (ramosEnEstaCelda.length >= 2) { alert("⚠️ Máximo 2 ramos."); return; }
     if (ramosEnEstaCelda.some(h => h.ramo.id === ramoSeleccionado.id)) return;
 
-    const yaEstabaEnHorario = horarioArmado.some(h => h.ramo.id === ramoSeleccionado.id);
-    if (!yaEstabaEnHorario) {
-      const nuevosCreditos = creditosTotales + ramoSeleccionado.creditos;
-      if (nuevosCreditos > 30) {
-        alert("⚠️ ¡Tope de créditos (30)!"); return;
-      }
-      setCreditosTotales(nuevosCreditos);
+    // Validar Créditos
+    const yaEstaba = horarioArmado.some(h => h.ramo.id === ramoSeleccionado.id);
+    if (!yaEstaba) {
+      if (creditosTotales + ramoSeleccionado.creditos > 30) { alert("⚠️ Tope de 30 créditos."); return; }
+      setCreditosTotales(creditosTotales + ramoSeleccionado.creditos);
     }
 
-    const nuevoItem = { id_unico: Date.now() + Math.random(), ramo: ramoSeleccionado, dia, bloque };
+    // 1. GUARDAR EN SUPABASE PRIMERO
+    const { data, error } = await supabase
+      .from('mis_horarios')
+      .insert({
+        email: usuario,
+        ramo_id: ramoSeleccionado.id,
+        dia: dia,
+        bloque: bloque
+      })
+      .select()
+
+    if (error) {
+      alert("Error guardando: " + error.message);
+      return;
+    }
+
+    // 2. SI SE GUARDÓ BIEN, ACTUALIZAR PANTALLA
+    const nuevoItem = {
+      id_unico: data[0].id, // Usamos el ID que nos dio Supabase
+      ramo: ramoSeleccionado,
+      dia,
+      bloque
+    };
     setHorarioArmado([...horarioArmado, nuevoItem]);
   }
 
-  function quitarDeCelda(itemAQuitar) {
+  // --- FUNCIÓN QUITAR (CON BORRADO EN BD) ---
+  async function quitarDeCelda(itemAQuitar) {
+    // 1. BORRAR DE SUPABASE
+    const { error } = await supabase
+      .from('mis_horarios')
+      .delete()
+      .eq('id', itemAQuitar.id_unico) // Borramos por el ID único de la fila
+
+    if (error) {
+      console.log("Error borrando", error);
+      return;
+    }
+
+    // 2. ACTUALIZAR PANTALLA
     const nuevoHorario = horarioArmado.filter(i => i.id_unico !== itemAQuitar.id_unico);
     setHorarioArmado(nuevoHorario);
-    if (!nuevoHorario.some(i => i.ramo.id === itemAQuitar.ramo.id)) {
+
+    // Recalcular créditos
+    const sigueEstando = nuevoHorario.some(i => i.ramo.id === itemAQuitar.ramo.id);
+    if (!sigueEstando) {
       setCreditosTotales(creditosTotales - itemAQuitar.ramo.creditos);
+    }
+  }
+
+  // --- FUNCIÓN LIMPIAR TODO (RESET) ---
+  async function limpiarTodo() {
+    if(!window.confirm("¿Seguro que quieres borrar TODO tu horario?")) return;
+
+    // 1. Borrar todo de la BD para este usuario
+    const { error } = await supabase
+      .from('mis_horarios')
+      .delete()
+      .eq('email', usuario)
+
+    if (error) {
+      alert("Error limpiando: " + error.message);
+    } else {
+      // 2. Limpiar pantalla
+      setHorarioArmado([]);
+      setCreditosTotales(0);
     }
   }
 
@@ -110,78 +196,43 @@ function App() {
     XLSX.writeFile(libro, `Horario_${usuario}.xlsx`);
   }
 
-  // --- VISTA 1: LOGIN ---
+  const ramosFiltrados = catalogoRamos.filter(r => 
+    r.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
+    r.id.toLowerCase().includes(busqueda.toLowerCase())
+  );
+
+  // VISTA LOGIN
   if (!usuario) {
     return (
-      <div style={{ height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#f0f2f5', fontFamily: 'Segoe UI, sans-serif' }}>
+      <div style={{ height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#f0f2f5', fontFamily: 'Segoe UI' }}>
         <div style={{ background: 'white', padding: '40px', borderRadius: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', width: '350px', textAlign: 'center' }}>
           <h1 style={{ color: '#2c3e50', marginBottom: '10px' }}>🎓 Acceso Estudiantes</h1>
-          <p style={{ color: '#666', marginBottom: '30px' }}>Ingresa tu correo institucional para armar tu horario.</p>
-          
+          <p style={{ color: '#666', marginBottom: '30px' }}>Tu horario se guardará automáticamente con tu correo.</p>
           <form onSubmit={handleLogin}>
-            <input 
-              type="email" 
-              placeholder={`ejemplo${DOMINIOS_PERMITIDOS[0]}`} // Muestra el primero como ejemplo
-              value={emailInput}
-              onChange={(e) => setEmailInput(e.target.value)}
-              style={{ width: '100%', padding: '12px', borderRadius: '5px', border: '1px solid #ccc', marginBottom: '15px', boxSizing: 'border-box' }}
-            />
-            
-            {errorLogin && (
-              <div style={{ color: '#dc3545', fontSize: '0.9rem', marginBottom: '15px', background: '#f8d7da', padding: '10px', borderRadius: '5px' }}>
-                {errorLogin}
-              </div>
-            )}
-
-            <button 
-              type="submit" 
-              style={{ width: '100%', padding: '12px', background: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '1rem' }}
-            >
-              Ingresar al Planificador
-            </button>
+            <input type="email" placeholder="Ingresa tu correo UCM..." value={emailInput} onChange={(e) => setEmailInput(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '5px', border: '1px solid #ccc', marginBottom: '15px', boxSizing: 'border-box' }} />
+            {errorLogin && <div style={{ color: '#dc3545', fontSize: '0.9rem', marginBottom: '15px', background: '#f8d7da', padding: '10px', borderRadius: '5px' }}>{errorLogin}</div>}
+            <button type="submit" style={{ width: '100%', padding: '12px', background: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Ingresar</button>
           </form>
         </div>
       </div>
     )
   }
 
-  // --- VISTA 2: APLICACIÓN ---
-  const ramosFiltrados = catalogoRamos.filter(r => 
-    r.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
-    r.id.toLowerCase().includes(busqueda.toLowerCase())
-  );
-
+  // VISTA PLANIFICADOR
   return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: 'Segoe UI, sans-serif' }}>
-      
+    <div style={{ display: 'flex', height: '100vh', fontFamily: 'Segoe UI' }}>
       {/* SIDEBAR */}
       <div style={{ width: '300px', padding: '20px', background: '#f8f9fa', borderRight: '1px solid #ddd', display: 'flex', flexDirection: 'column' }}>
         <div style={{ marginBottom: '20px' }}>
           <h2 style={{ color: '#2c3e50', margin: 0 }}>📚 Catálogo</h2>
           <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '5px' }}>
-            Hola, {usuario} <button onClick={() => setUsuario(null)} style={{ border: 'none', background: 'transparent', color: 'red', cursor: 'pointer', textDecoration: 'underline' }}>(Salir)</button>
+            {usuario} <button onClick={() => setUsuario(null)} style={{ border: 'none', background: 'transparent', color: 'red', cursor: 'pointer', textDecoration: 'underline' }}>(Salir)</button>
           </div>
         </div>
-        
-        <input 
-          type="text" 
-          placeholder="Buscar..." 
-          onChange={(e) => setBusqueda(e.target.value)}
-          style={{ padding: '10px', marginBottom: '15px', borderRadius: '4px', border: '1px solid #ccc', width: '100%', boxSizing: 'border-box' }}
-        />
-
+        <input type="text" placeholder="Buscar..." onChange={(e) => setBusqueda(e.target.value)} style={{ padding: '10px', marginBottom: '15px', borderRadius: '4px', border: '1px solid #ccc', width: '100%', boxSizing: 'border-box' }} />
         <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {ramosFiltrados.map((ramo) => (
-            <div 
-              key={ramo.id} 
-              onClick={() => toggleSeleccionRamo(ramo)}
-              style={{ 
-                padding: '10px', 
-                background: ramoSeleccionado?.id === ramo.id ? '#cce5ff' : 'white',
-                border: ramoSeleccionado?.id === ramo.id ? '2px solid #004085' : '1px solid #ddd',
-                borderRadius: '6px', cursor: 'pointer', userSelect: 'none'
-              }}
-            >
+            <div key={ramo.id} onClick={() => toggleSeleccionRamo(ramo)} style={{ padding: '10px', background: ramoSeleccionado?.id === ramo.id ? '#cce5ff' : 'white', border: ramoSeleccionado?.id === ramo.id ? '2px solid #004085' : '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', userSelect: 'none' }}>
               <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#0056b3' }}>{ramo.id}</div>
               <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{ramo.nombre}</div>
               <div style={{ fontSize: '0.75rem', color: '#666' }}>💎 {ramo.creditos} Créditos</div>
@@ -195,6 +246,10 @@ function App() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '10px', borderBottom: '2px solid #eee' }}>
           <h1 style={{ margin: 0, color: '#333' }}>📅 Planificador</h1>
           <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+            {/* BOTÓN LIMPIAR NUEVO */}
+            <button onClick={limpiarTodo} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              🗑️ Limpiar Todo
+            </button>
             <button onClick={exportarExcel} style={{ background: '#217346', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
               📥 Excel
             </button>
