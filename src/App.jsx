@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabase'
 import * as XLSX from 'xlsx'
+import html2canvas from 'html2canvas'
 
 // --- CONFIGURACIÓN ---
-const DOMINIOS_PERMITIDOS = ["@alumnos.ucm.cl", "@alum.ucm.cl", "@ucm.cl"]; // Tus dominios
+const DOMINIOS_PERMITIDOS = ["@alumnos.ucm.cl", "@alum.ucm.cl", "@ucm.cl"];
 
 const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const BLOQUES = [
@@ -12,20 +13,38 @@ const BLOQUES = [
   '15:35 - 16:35', '16:55 - 17:50', '17:55 - 18:55'
 ];
 
+const PALETA = [
+  '#FFCDD2', '#F8BBD0', '#E1BEE7', '#D1C4E9', '#C5CAE9', 
+  '#BBDEFB', '#B3E5FC', '#B2EBF2', '#B2DFDB', '#C8E6C9', 
+  '#DCEDC8', '#FFF9C4', '#FFECB3', '#FFE0B2', '#D7CCC8', '#F5F5F5'
+];
+
 function App() {
-  // LOGIN
+  // ESTADOS
+  const [modoOscuro, setModoOscuro] = useState(false); 
   const [usuario, setUsuario] = useState(null)
   const [emailInput, setEmailInput] = useState("")
   const [errorLogin, setErrorLogin] = useState("")
-
-  // DATOS
   const [catalogoRamos, setCatalogoRamos] = useState([])
   const [busqueda, setBusqueda] = useState("")
   const [ramoSeleccionado, setRamoSeleccionado] = useState(null)
   const [horarioArmado, setHorarioArmado] = useState([])
   const [creditosTotales, setCreditosTotales] = useState(0)
 
-  // CARGAR CATALOGO AL INICIO
+  // --- TEMA DE COLORES ---
+  const tema = {
+    fondo: modoOscuro ? '#121212' : '#f0f2f5',
+    sidebar: modoOscuro ? '#1e1e1e' : '#f8f9fa',
+    texto: modoOscuro ? '#e0e0e0' : '#2c3e50',
+    textoSecundario: modoOscuro ? '#aaaaaa' : '#666',
+    tarjeta: modoOscuro ? '#2d2d2d' : 'white',
+    borde: modoOscuro ? '#444' : '#ddd',
+    inputFondo: modoOscuro ? '#333' : 'white',
+    inputTexto: modoOscuro ? 'white' : 'black',
+    tablaHeader: modoOscuro ? '#333' : '#e9ecef',
+    bloqueLabel: modoOscuro ? '#252525' : '#f8f9fa'
+  };
+
   useEffect(() => {
     async function getAsignaturas() {
       const { data } = await supabase.from('asignaturas').select('*').order('id')
@@ -34,60 +53,41 @@ function App() {
     getAsignaturas()
   }, [])
 
-  // --- EFECTO MAGICO: CARGAR HORARIO AL LOGUEARSE ---
   useEffect(() => {
-    if (usuario && catalogoRamos.length > 0) {
-      cargarHorarioGuardado();
-    }
+    if (usuario && catalogoRamos.length > 0) cargarHorarioGuardado();
   }, [usuario, catalogoRamos])
 
-  async function cargarHorarioGuardado() {
-    // 1. Buscamos en la tabla 'mis_horarios' todo lo de este email
-    const { data: datosGuardados } = await supabase
-      .from('mis_horarios')
-      .select('*')
-      .eq('email', usuario)
+  const obtenerColor = (nombre) => {
+    let hash = 0;
+    for (let i = 0; i < nombre.length; i++) hash = nombre.charCodeAt(i) + ((hash << 5) - hash);
+    return PALETA[Math.abs(hash) % PALETA.length];
+  };
 
+  async function cargarHorarioGuardado() {
+    const { data: datosGuardados } = await supabase.from('mis_horarios').select('*').eq('email', usuario)
     if (datosGuardados && datosGuardados.length > 0) {
-      // 2. Reconstruimos el horario para la app
       let creditosAcumulados = 0;
       const horarioReconstruido = datosGuardados.map(item => {
-        // Buscamos el objeto ramo completo usando el ID que guardamos
         const ramoCompleto = catalogoRamos.find(r => r.id === item.ramo_id);
-        
-        // Sumamos créditos (con cuidado de no sumar duplicados si el código es malo, 
-        // pero aquí solo sumamos para calcular el total inicial)
-        // Nota: Para simplificar, recalculamos abajo.
-        return {
-          id_unico: item.id, // Usamos el ID real de la base de datos
-          ramo: ramoCompleto,
-          dia: item.dia,
-          bloque: item.bloque
-        };
-      }).filter(item => item.ramo); // Filtramos si alguno no se encontró
+        return { id_unico: item.id, ramo: ramoCompleto, dia: item.dia, bloque: item.bloque };
+      }).filter(item => item.ramo);
 
-      // Calcular créditos únicos
       const ramosUnicos = [...new Set(horarioReconstruido.map(h => h.ramo.id))];
       ramosUnicos.forEach(id => {
         const r = catalogoRamos.find(cata => cata.id === id);
         if (r) creditosAcumulados += r.creditos;
       });
-
       setHorarioArmado(horarioReconstruido);
       setCreditosTotales(creditosAcumulados);
     }
   }
-  // ----------------------------------------------------
 
   function handleLogin(e) {
     e.preventDefault(); 
     if (!emailInput) { setErrorLogin("Escribe tu correo."); return; }
-    
     const esValido = DOMINIOS_PERMITIDOS.some(d => emailInput.toLowerCase().endsWith(d));
     if (!esValido) { setErrorLogin(`Solo correos: ${DOMINIOS_PERMITIDOS.join(", ")}`); return; }
-
-    setUsuario(emailInput);
-    setErrorLogin("");
+    setUsuario(emailInput); setErrorLogin("");
   }
 
   function toggleSeleccionRamo(ramo) {
@@ -95,89 +95,35 @@ function App() {
     else setRamoSeleccionado(ramo)
   }
 
-  // --- FUNCIÓN AGREGAR (CON GUARDADO EN BD) ---
   async function colocarEnCelda(dia, bloque) {
     if (!ramoSeleccionado) return;
-
-    // Validaciones locales
     const ramosEnEstaCelda = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
     if (ramosEnEstaCelda.length >= 2) { alert("⚠️ Máximo 2 ramos."); return; }
     if (ramosEnEstaCelda.some(h => h.ramo.id === ramoSeleccionado.id)) return;
 
-    // Validar Créditos
     const yaEstaba = horarioArmado.some(h => h.ramo.id === ramoSeleccionado.id);
     if (!yaEstaba) {
       if (creditosTotales + ramoSeleccionado.creditos > 30) { alert("⚠️ Tope de 30 créditos."); return; }
       setCreditosTotales(creditosTotales + ramoSeleccionado.creditos);
     }
 
-    // 1. GUARDAR EN SUPABASE PRIMERO
-    const { data, error } = await supabase
-      .from('mis_horarios')
-      .insert({
-        email: usuario,
-        ramo_id: ramoSeleccionado.id,
-        dia: dia,
-        bloque: bloque
-      })
-      .select()
-
-    if (error) {
-      alert("Error guardando: " + error.message);
-      return;
-    }
-
-    // 2. SI SE GUARDÓ BIEN, ACTUALIZAR PANTALLA
-    const nuevoItem = {
-      id_unico: data[0].id, // Usamos el ID que nos dio Supabase
-      ramo: ramoSeleccionado,
-      dia,
-      bloque
-    };
-    setHorarioArmado([...horarioArmado, nuevoItem]);
+    const { data, error } = await supabase.from('mis_horarios').insert({ email: usuario, ramo_id: ramoSeleccionado.id, dia: dia, bloque: bloque }).select()
+    if (error) { alert("Error guardando: " + error.message); return; }
+    setHorarioArmado([...horarioArmado, { id_unico: data[0].id, ramo: ramoSeleccionado, dia, bloque }]);
   }
 
-  // --- FUNCIÓN QUITAR (CON BORRADO EN BD) ---
   async function quitarDeCelda(itemAQuitar) {
-    // 1. BORRAR DE SUPABASE
-    const { error } = await supabase
-      .from('mis_horarios')
-      .delete()
-      .eq('id', itemAQuitar.id_unico) // Borramos por el ID único de la fila
-
-    if (error) {
-      console.log("Error borrando", error);
-      return;
-    }
-
-    // 2. ACTUALIZAR PANTALLA
+    const { error } = await supabase.from('mis_horarios').delete().eq('id', itemAQuitar.id_unico)
+    if (error) return;
     const nuevoHorario = horarioArmado.filter(i => i.id_unico !== itemAQuitar.id_unico);
     setHorarioArmado(nuevoHorario);
-
-    // Recalcular créditos
-    const sigueEstando = nuevoHorario.some(i => i.ramo.id === itemAQuitar.ramo.id);
-    if (!sigueEstando) {
-      setCreditosTotales(creditosTotales - itemAQuitar.ramo.creditos);
-    }
+    if (!nuevoHorario.some(i => i.ramo.id === itemAQuitar.ramo.id)) setCreditosTotales(creditosTotales - itemAQuitar.ramo.creditos);
   }
 
-  // --- FUNCIÓN LIMPIAR TODO (RESET) ---
   async function limpiarTodo() {
-    if(!window.confirm("¿Seguro que quieres borrar TODO tu horario?")) return;
-
-    // 1. Borrar todo de la BD para este usuario
-    const { error } = await supabase
-      .from('mis_horarios')
-      .delete()
-      .eq('email', usuario)
-
-    if (error) {
-      alert("Error limpiando: " + error.message);
-    } else {
-      // 2. Limpiar pantalla
-      setHorarioArmado([]);
-      setCreditosTotales(0);
-    }
+    if(!window.confirm("¿Borrar todo?")) return;
+    await supabase.from('mis_horarios').delete().eq('email', usuario)
+    setHorarioArmado([]); setCreditosTotales(0);
   }
 
   function exportarExcel() {
@@ -185,31 +131,45 @@ function App() {
       const fila = { Horario: bloque };
       DIAS.forEach(dia => {
         const items = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
-        fila[dia] = items.map(i => `${i.ramo.id} ${i.ramo.nombre}`).join(' / ');
+        fila[dia] = items.map(i => i.ramo.nombre).join(' / ');
       });
       return fila;
     });
     const libro = XLSX.utils.book_new();
     const hoja = XLSX.utils.json_to_sheet(datosTabla);
-    hoja['!cols'] = [{ wch: 15 }, ...DIAS.map(() => ({ wch: 25 }))];
     XLSX.utils.book_append_sheet(libro, hoja, "Horario");
     XLSX.writeFile(libro, `Horario_${usuario}.xlsx`);
   }
 
-  const ramosFiltrados = catalogoRamos.filter(r => 
-    r.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
-    r.id.toLowerCase().includes(busqueda.toLowerCase())
-  );
+  async function exportarImagen() {
+    const elemento = document.getElementById('horario-screenshot');
+    if (!elemento) return;
+    const canvas = await html2canvas(elemento, { scale: 2, backgroundColor: tema.tarjeta });
+    const link = document.createElement('a');
+    link.download = `Mi_Horario_${usuario}.png`;
+    link.href = canvas.toDataURL();
+    link.click();
+  }
 
-  // VISTA LOGIN
+  const ramosFiltrados = catalogoRamos.filter(r => r.nombre.toLowerCase().includes(busqueda.toLowerCase()) || r.id.toLowerCase().includes(busqueda.toLowerCase()));
+
+  // --- VISTA LOGIN (FIX: PANTALLA COMPLETA) ---
   if (!usuario) {
     return (
-      <div style={{ height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#f0f2f5', fontFamily: 'Segoe UI' }}>
-        <div style={{ background: 'white', padding: '40px', borderRadius: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', width: '350px', textAlign: 'center' }}>
-          <h1 style={{ color: '#2c3e50', marginBottom: '10px' }}>🎓 Acceso Estudiantes</h1>
-          <p style={{ color: '#666', marginBottom: '30px' }}>Tu horario se guardará automáticamente con tu correo.</p>
+      <div style={{ 
+        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+        display: 'flex', justifyContent: 'center', alignItems: 'center',
+        background: tema.fondo, fontFamily: 'Segoe UI', transition: 'background 0.3s',
+        zIndex: 9999
+      }}>
+        <button onClick={() => setModoOscuro(!modoOscuro)} style={{ position: 'absolute', top: '20px', right: '20px', background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1.5rem', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>
+          {modoOscuro ? '☀️' : '🌙'}
+        </button>
+        <div style={{ background: tema.tarjeta, padding: '40px', borderRadius: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', width: '350px', textAlign: 'center', border: `1px solid ${tema.borde}` }}>
+          <h1 style={{ color: tema.texto, marginBottom: '10px' }}>🎓 Acceso Estudiantes</h1>
+          <p style={{ color: tema.textoSecundario, marginBottom: '30px' }}>Tu horario se guardará automáticamente.</p>
           <form onSubmit={handleLogin}>
-            <input type="email" placeholder="Ingresa tu correo UCM..." value={emailInput} onChange={(e) => setEmailInput(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '5px', border: '1px solid #ccc', marginBottom: '15px', boxSizing: 'border-box' }} />
+            <input type="email" placeholder="Ingresa tu correo UCM..." value={emailInput} onChange={(e) => setEmailInput(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '5px', border: `1px solid ${tema.borde}`, marginBottom: '15px', background: tema.inputFondo, color: tema.inputTexto }} />
             {errorLogin && <div style={{ color: '#dc3545', fontSize: '0.9rem', marginBottom: '15px', background: '#f8d7da', padding: '10px', borderRadius: '5px' }}>{errorLogin}</div>}
             <button type="submit" style={{ width: '100%', padding: '12px', background: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Ingresar</button>
           </form>
@@ -218,71 +178,86 @@ function App() {
     )
   }
 
-  // VISTA PLANIFICADOR
+  // --- VISTA PLANIFICADOR (FIX: PANTALLA COMPLETA) ---
   return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: 'Segoe UI' }}>
+    <div style={{ 
+      display: 'flex', 
+      height: '100vh', 
+      width: '100vw',        // <--- FORZAMOS ANCHO TOTAL
+      maxWidth: 'none',      // <--- QUITAMOS EL LIMITE DE VITE
+      position: 'fixed',     // <--- ASEGURAMOS QUE OCUPE TODO
+      top: 0, 
+      left: 0,
+      margin: 0,
+      padding: 0,
+      fontFamily: 'Segoe UI', 
+      color: tema.texto, 
+      backgroundColor: tema.fondo, 
+      transition: 'background 0.3s' 
+    }}>
+      
       {/* SIDEBAR */}
-      <div style={{ width: '300px', padding: '20px', background: '#f8f9fa', borderRight: '1px solid #ddd', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: '300px', padding: '20px', background: tema.sidebar, borderRight: `1px solid ${tema.borde}`, display: 'flex', flexDirection: 'column' }}>
         <div style={{ marginBottom: '20px' }}>
-          <h2 style={{ color: '#2c3e50', margin: 0 }}>📚 Catálogo</h2>
-          <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '5px' }}>
+          <h2 style={{ margin: 0 }}>📚 Catálogo</h2>
+          <div style={{ fontSize: '0.8rem', color: tema.textoSecundario, marginTop: '5px' }}>
             {usuario} <button onClick={() => setUsuario(null)} style={{ border: 'none', background: 'transparent', color: 'red', cursor: 'pointer', textDecoration: 'underline' }}>(Salir)</button>
           </div>
         </div>
-        <input type="text" placeholder="Buscar..." onChange={(e) => setBusqueda(e.target.value)} style={{ padding: '10px', marginBottom: '15px', borderRadius: '4px', border: '1px solid #ccc', width: '100%', boxSizing: 'border-box' }} />
+        
+        <input type="text" placeholder="Buscar ramo..." onChange={(e) => setBusqueda(e.target.value)} style={{ padding: '10px', marginBottom: '15px', borderRadius: '4px', border: `1px solid ${tema.borde}`, width: '100%', background: tema.inputFondo, color: tema.inputTexto }} />
         <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {ramosFiltrados.map((ramo) => (
-            <div key={ramo.id} onClick={() => toggleSeleccionRamo(ramo)} style={{ padding: '10px', background: ramoSeleccionado?.id === ramo.id ? '#cce5ff' : 'white', border: ramoSeleccionado?.id === ramo.id ? '2px solid #004085' : '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', userSelect: 'none' }}>
-              <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#0056b3' }}>{ramo.id}</div>
+            <div key={ramo.id} onClick={() => toggleSeleccionRamo(ramo)} style={{ padding: '10px', background: ramoSeleccionado?.id === ramo.id ? (modoOscuro ? '#0d47a1' : '#cce5ff') : tema.tarjeta, border: ramoSeleccionado?.id === ramo.id ? '2px solid #004085' : `1px solid ${tema.borde}`, borderRadius: '6px', cursor: 'pointer', userSelect: 'none' }}>
+              <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: ramoSeleccionado?.id === ramo.id ? 'white' : '#0056b3' }}>{ramo.id}</div>
               <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{ramo.nombre}</div>
-              <div style={{ fontSize: '0.75rem', color: '#666' }}>💎 {ramo.creditos} Créditos</div>
+              <div style={{ fontSize: '0.75rem', color: tema.textoSecundario }}>💎 {ramo.creditos} Créditos</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* CALENDARIO */}
+      {/* ÁREA PRINCIPAL */}
       <div style={{ flex: 1, padding: '20px', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '10px', borderBottom: '2px solid #eee' }}>
-          <h1 style={{ margin: 0, color: '#333' }}>📅 Planificador</h1>
-          <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-            {/* BOTÓN LIMPIAR NUEVO */}
-            <button onClick={limpiarTodo} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              🗑️ Limpiar Todo
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '10px', borderBottom: `2px solid ${tema.borde}` }}>
+          <h1 style={{ margin: 0 }}>📅 Planificador</h1>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <button onClick={() => setModoOscuro(!modoOscuro)} style={{ background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1.2rem', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>
+              {modoOscuro ? '☀️' : '🌙'}
             </button>
-            <button onClick={exportarExcel} style={{ background: '#217346', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              📥 Excel
-            </button>
-            <div style={{ padding: '10px 20px', background: creditosTotales > 30 ? '#dc3545' : '#28a745', color: 'white', borderRadius: '20px', fontWeight: 'bold' }}>
-              Créditos: {creditosTotales} / 30
+            <button onClick={limpiarTodo} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>🗑️</button>
+            <button onClick={exportarExcel} style={{ background: '#217346', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>📥 Excel</button>
+            <button onClick={exportarImagen} style={{ background: '#7b1fa2', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>📷 Foto</button>
+            <div style={{ padding: '8px 15px', background: creditosTotales > 30 ? '#dc3545' : '#28a745', color: 'white', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.9rem' }}>
+              {creditosTotales} / 30
             </div>
           </div>
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto' }}>
+        <div id="horario-screenshot" style={{ flex: 1, overflow: 'auto', background: tema.tarjeta, padding: '10px', borderRadius: '8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
               <tr>
-                <th style={{ background: '#e9ecef', padding: '12px', border: '1px solid #dee2e6' }}>Bloque</th>
-                {DIAS.map(d => <th key={d} style={{ background: '#e9ecef', padding: '12px', border: '1px solid #dee2e6', width: '14%' }}>{d}</th>)}
+                <th style={{ background: tema.tablaHeader, padding: '12px', border: `1px solid ${tema.borde}`, color: tema.texto }}>Bloque</th>
+                {DIAS.map(d => <th key={d} style={{ background: tema.tablaHeader, padding: '12px', border: `1px solid ${tema.borde}`, width: '14%', color: tema.texto }}>{d}</th>)}
               </tr>
             </thead>
             <tbody>
               {BLOQUES.map((bloque) => (
                 <tr key={bloque}>
-                  <td style={{ padding: '8px', border: '1px solid #dee2e6', fontWeight: 'bold', textAlign: 'center', background: '#f8f9fa' }}>{bloque}</td>
+                  <td style={{ padding: '8px', border: `1px solid ${tema.borde}`, fontWeight: 'bold', textAlign: 'center', background: tema.bloqueLabel, color: tema.texto }}>{bloque}</td>
                   {DIAS.map(dia => {
                     const items = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
                     return (
-                      <td key={dia} onClick={() => colocarEnCelda(dia, bloque)} style={{ border: '1px solid #dee2e6', height: '85px', verticalAlign: 'top', padding: '4px', cursor: ramoSeleccionado ? 'cell' : 'default', background: items.length > 0 ? 'white' : 'transparent' }}>
+                      <td key={dia} onClick={() => colocarEnCelda(dia, bloque)} style={{ border: `1px solid ${tema.borde}`, height: '85px', verticalAlign: 'top', padding: '4px', cursor: ramoSeleccionado ? 'cell' : 'default', background: items.length > 0 ? tema.tarjeta : 'transparent' }}>
                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', height: '100%' }}>
                           {items.map(item => (
-                            <div key={item.id_unico} style={{ background: '#e3f2fd', padding: '4px 6px', borderRadius: '4px', borderLeft: '3px solid #2196f3', display: 'flex', justifyContent: 'space-between', alignItems: 'start', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
+                            <div key={item.id_unico} style={{ background: obtenerColor(item.ramo.nombre), padding: '4px 6px', borderRadius: '4px', border: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'start', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
                               <div style={{ overflow: 'hidden' }}>
-                                <div style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#1565c0' }}>{item.ramo.id}</div>
-                                <div style={{ fontSize: '0.75rem', lineHeight: '1.1', color: '#0d47a1' }}>{item.ramo.nombre}</div>
+                                <div style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#444' }}>{item.ramo.id}</div>
+                                <div style={{ fontSize: '0.75rem', lineHeight: '1.1', color: '#222' }}>{item.ramo.nombre}</div>
                               </div>
-                              <button onClick={(e) => { e.stopPropagation(); quitarDeCelda(item); }} style={{ background: 'transparent', border: 'none', color: '#d32f2f', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem', lineHeight: '0.5', padding: '0 0 0 4px' }}>×</button>
+                              <button onClick={(e) => { e.stopPropagation(); quitarDeCelda(item); }} style={{ background: 'transparent', border: 'none', color: '#444', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem', lineHeight: '0.5', padding: '0 0 0 4px' }}>×</button>
                             </div>
                           ))}
                         </div>
