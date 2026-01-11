@@ -161,47 +161,68 @@ function App() {
   }
 
   // --- LA CÁMARA FANTASMA (TRUCO DE MAGIA) 📸 ---
+  // --- LA CÁMARA FANTASMA (VERSIÓN BLINDADA 3.1) 📸 ---
   async function exportarImagen() {
     const original = document.getElementById('horario-screenshot');
     if (!original) return;
 
-    // 1. CLONAR: Creamos una copia exacta del horario
+    // 1. CLONAR: Creamos una copia
     const clone = original.cloneNode(true);
 
-    // 2. FORZAR ESTILO DE ESCRITORIO AL CLON
-    // Lo hacemos invisible y lo pegamos en el cuerpo de la pagina
-    // Forzamos un ancho de 1300px para que los ramos no se vean aplastados
-    clone.style.position = 'fixed';
-    clone.style.top = '-9999px'; // Fuera de la pantalla
-    clone.style.left = '0';
-    clone.style.width = '1300px'; // ANCHO DE PC
-    clone.style.height = 'auto';
-    clone.style.overflow = 'visible'; // Que se vea todo hacia abajo
+    // 2. PREPARAR EL QUIRÓFANO (Estilos del contenedor clon)
+    // Lo hacemos invisible pero ocupando espacio real
+    clone.style.position = 'absolute';
+    clone.style.top = '0'; // Lo pegamos arriba para evitar desfases
+    clone.style.left = '-9999px'; // Lo sacamos de la vista
+    clone.style.width = '1500px'; // ANCHO FORZADO DE ESCRITORIO
     clone.style.zIndex = '-1';
     clone.style.background = tema.tarjeta; // Fondo correcto
+    clone.style.borderRadius = '0'; // Sin bordes redondos en la foto
     
+    // 3. LA LOBOTOMÍA (Arreglar estilos internos que rompen la foto)
+    
+    // A) Quitar el 'position: sticky' de la cabecera (CAUSANTE DEL ERROR GRIS)
+    const thead = clone.querySelector('thead');
+    if (thead) {
+        thead.style.position = 'static'; // Ya no es pegajoso
+        thead.style.top = 'auto';
+    }
+
+    // B) Asegurar que la tabla ocupe todo el espacio
+    const table = clone.querySelector('table');
+    if (table) {
+        table.style.width = '100%';
+        table.style.tableLayout = 'fixed'; // Fuerza a las celdas a respetar el ancho
+    }
+    
+    // C) Asegurar colores de texto (por si acaso)
+    clone.style.color = tema.texto;
+
     document.body.appendChild(clone);
 
-    // 3. TOMAR FOTO AL CLON
-    // Esperamos un poco para que carguen los estilos
+    // 4. TOMAR LA FOTO
     try {
         const canvas = await html2canvas(clone, { 
-            scale: 2, // Alta calidad
-            backgroundColor: tema.tarjeta,
-            windowWidth: 1300, // Simulamos pantalla grande
-            useCORS: true
+            scale: 2, // Alta calidad (Retina)
+            width: 1500, // Ancho de la captura
+            windowWidth: 1500, // Simulamos una pantalla de 1500px
+            backgroundColor: tema.tarjeta, // Evita fondos negros/transparentes
+            scrollY: 0, // Evita que el scroll actual afecte la foto
+            x: 0,
+            y: 0,
+            useCORS: true // Ayuda con fuentes externas
         });
 
-        // 4. DESCARGAR
+        // 5. DESCARGAR
         const link = document.createElement('a');
-        link.download = `Horario_${nombreUsuario || usuario}.png`;
+        link.download = `Horario_${nombreUsuario ? nombreUsuario.replace(/\s+/g, '_') : 'UCM'}.png`;
         link.href = canvas.toDataURL();
         link.click();
     } catch (err) {
         console.error("Error al tomar foto:", err);
         alert("Hubo un error al crear la imagen.");
     } finally {
-        // 5. BORRAR LA EVIDENCIA (Eliminar el clon)
+        // 6. LIMPIEZA
         document.body.removeChild(clone);
     }
   }
