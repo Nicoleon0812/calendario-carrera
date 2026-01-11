@@ -59,7 +59,7 @@ function App() {
 
   useEffect(() => {
     async function getAsignaturas() {
-      const { data } = await supabase.from('asignatura').select('*').order('id')
+      const { data } = await supabase.from('asignaturas').select('*').order('id')
       if (data) setCatalogoRamos(data)
     }
     getAsignaturas()
