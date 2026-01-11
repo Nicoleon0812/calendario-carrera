@@ -223,4 +223,140 @@ function App() {
     return (
       <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', background: tema.fondo, fontFamily: 'Segoe UI', transition: 'background 0.3s', zIndex: 9999 }}>
         <button onClick={() => setModoOscuro(!modoOscuro)} style={{ position: 'absolute', top: '20px', right: '20px', background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1.5rem', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>{modoOscuro ? '☀️' : '🌙'}</button>
-        <div style={{ background: tema.tarjeta, padding: '40px', borderRadius: '10px', boxShadow: '0 4px 15px rgba(0,0,0
+        {/* AQUÍ ESTABA EL ERROR DE LA COMILLA CORTADA */}
+        <div style={{ background: tema.tarjeta, padding: '40px', borderRadius: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', width: '350px', maxWidth: '90%', textAlign: 'center', border: `1px solid ${tema.borde}` }}>
+          <h1 style={{ color: tema.texto, marginBottom: '10px' }}>🎓 Acceso Estudiantes</h1>
+          <p style={{ color: tema.textoSecundario, marginBottom: '30px' }}>Tu horario se guardará automáticamente.</p>
+          <form onSubmit={handleLogin}>
+            <input type="email" placeholder="Ingresa tu correo UCM..." value={emailInput} onChange={(e) => setEmailInput(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '5px', border: `1px solid ${tema.borde}`, marginBottom: '15px', background: tema.inputFondo, color: tema.inputTexto }} />
+            {errorLogin && <div style={{ color: '#dc3545', fontSize: '0.9rem', marginBottom: '15px', background: '#f8d7da', padding: '10px', borderRadius: '5px' }}>{errorLogin}</div>}
+            <button type="submit" style={{ width: '100%', padding: '12px', background: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Ingresar</button>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  // --- VISTA PLANIFICADOR (RESPONSIVE FIX) ---
+  return (
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: esMovil ? 'column' : 'row', 
+      height: '100vh', width: '100vw', 
+      maxWidth: 'none', position: 'fixed', top: 0, left: 0, margin: 0, padding: 0, 
+      fontFamily: 'Segoe UI', color: tema.texto, backgroundColor: tema.fondo, transition: 'background 0.3s' 
+    }}>
+      
+      {/* SIDEBAR / MENÚ SUPERIOR */}
+      <div style={{ 
+          width: esMovil ? '100%' : '300px', 
+          height: esMovil ? (menuMovilAbierto ? '50vh' : 'auto') : '100%', 
+          padding: esMovil ? '10px 15px' : '20px', 
+          background: tema.sidebar, 
+          borderRight: esMovil ? 'none' : `1px solid ${tema.borde}`, 
+          borderBottom: esMovil ? `1px solid ${tema.borde}` : 'none',
+          display: 'flex', flexDirection: 'column', 
+          zIndex: 10,
+          transition: 'height 0.3s'
+        }}>
+        
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: esMovil ? '1.2rem' : '1.5rem' }}>👋 Hola, {nombreUsuario ? nombreUsuario.replace('.', ' ').split(" ")[0] : "Estudiante"}</h2>
+            <div style={{ fontSize: '0.8rem', color: tema.textoSecundario }}>
+              <button onClick={() => {setUsuario(null); setNombreUsuario(null);}} style={{ border: 'none', background: 'transparent', color: 'red', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>(Salir)</button>
+            </div>
+          </div>
+          
+          {/* BOTÓN HAMBURGUESA */}
+          {esMovil && (
+            <button onClick={() => setMenuMovilAbierto(!menuMovilAbierto)} style={{ 
+                background: 'transparent', 
+                border: `1px solid ${tema.borde}`, 
+                fontSize: '0.9rem', 
+                fontWeight: 'bold',
+                padding: '6px 12px', 
+                borderRadius: '5px', 
+                color: tema.texto,
+                whiteSpace: 'nowrap'
+            }}>
+              {menuMovilAbierto ? '▲' : '▼'} Catálogo
+            </button>
+          )}
+        </div>
+
+        {/* CONTENIDO DEL SIDEBAR */}
+        <div style={{ display: (esMovil && !menuMovilAbierto) ? 'none' : 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+          <input type="text" placeholder="Buscar ramo..." onChange={(e) => setBusqueda(e.target.value)} style={{ padding: '10px', marginBottom: '15px', borderRadius: '4px', border: `1px solid ${tema.borde}`, width: '100%', background: tema.inputFondo, color: tema.inputTexto }} />
+          <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {ramosFiltrados.map((ramo) => (
+              <div key={ramo.id} onClick={() => toggleSeleccionRamo(ramo)} style={{ padding: '10px', background: ramoSeleccionado?.id === ramo.id ? (modoOscuro ? '#0d47a1' : '#cce5ff') : tema.tarjeta, border: ramoSeleccionado?.id === ramo.id ? '2px solid #004085' : `1px solid ${tema.borde}`, borderRadius: '6px', cursor: 'pointer', userSelect: 'none' }}>
+                <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: ramoSeleccionado?.id === ramo.id ? 'white' : '#0056b3' }}>{ramo.id}</div>
+                <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{ramo.nombre}</div>
+                <div style={{ fontSize: '0.75rem', color: tema.textoSecundario }}>💎 {ramo.creditos} Créditos</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ÁREA PRINCIPAL */}
+      <div style={{ flex: 1, padding: '10px', overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        
+        {/* BARRA DE HERRAMIENTAS */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', paddingBottom: '10px', borderBottom: `2px solid ${tema.borde}`, gap: '10px' }}>
+          <h1 style={{ margin: 0, fontSize: esMovil ? '1.2rem' : '1.5rem' }}>📅</h1>
+          
+          <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap' }}>
+             <div style={{ padding: '5px 10px', background: creditosTotales > 30 ? '#dc3545' : '#28a745', color: 'white', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.8rem' }}>{creditosTotales}/30</div>
+             <button onClick={() => setModoOscuro(!modoOscuro)} style={{ background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1rem', padding: '5px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>{modoOscuro ? '☀️' : '🌙'}</button>
+             <button onClick={limpiarTodo} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>🗑️</button>
+             {!esMovil && <button onClick={exportarExcel} style={{ background: '#217346', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>Excel</button>}
+             <button onClick={exportarImagen} style={{ background: '#7b1fa2', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>📷 Foto</button>
+          </div>
+        </div>
+
+        {/* TABLA */}
+        <div style={{ flex: 1, overflow: 'auto', background: tema.tarjeta, borderRadius: '8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', position: 'relative' }}>
+          <div id="horario-screenshot" style={{ minWidth: '800px', padding: '10px', background: tema.tarjeta }}> 
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                <tr>
+                  <th style={{ background: tema.tablaHeader, padding: '12px', border: `1px solid ${tema.borde}`, color: tema.texto, minWidth: '80px' }}>Bloque</th>
+                  {DIAS.map(d => <th key={d} style={{ background: tema.tablaHeader, padding: '12px', border: `1px solid ${tema.borde}`, width: '14%', color: tema.texto, minWidth: '100px' }}>{d}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {BLOQUES.map((bloque) => (
+                  <tr key={bloque}>
+                    <td style={{ padding: '8px', border: `1px solid ${tema.borde}`, fontWeight: 'bold', textAlign: 'center', background: tema.bloqueLabel, color: tema.texto }}>{bloque}</td>
+                    {DIAS.map(dia => {
+                      const items = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
+                      return (
+                        <td key={dia} onClick={() => colocarEnCelda(dia, bloque)} style={{ border: `1px solid ${tema.borde}`, height: '85px', verticalAlign: 'top', padding: '4px', cursor: ramoSeleccionado ? 'cell' : 'default', background: items.length > 0 ? tema.tarjeta : 'transparent' }}>
+                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', height: '100%' }}>
+                            {items.map(item => (
+                              <div key={item.id_unico} style={{ background: obtenerColor(item.ramo.nombre), padding: '4px 6px', borderRadius: '4px', border: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'start', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
+                                <div style={{ overflow: 'hidden' }}>
+                                  <div style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#444' }}>{item.ramo.id}</div>
+                                  <div style={{ fontSize: '0.75rem', lineHeight: '1.1', color: '#222' }}>{item.ramo.nombre}</div>
+                                </div>
+                                <button onClick={(e) => { e.stopPropagation(); quitarDeCelda(item); }} style={{ background: 'transparent', border: 'none', color: '#444', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem', lineHeight: '0.5', padding: '0 0 0 4px' }}>×</button>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default App
