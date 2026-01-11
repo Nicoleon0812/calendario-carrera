@@ -1,14 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from './supabase'
 import * as XLSX from 'xlsx'
 import html2canvas from 'html2canvas'
 
 // --- CONFIGURACIÓN ---
-const DOMINIOS_PERMITIDOS = ["@alumnos.ucm.cl", "@alum.ucm.cl", "@ucm.cl"];
-
 const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const BLOQUES = [
-  '08:30 - 09:30', '09:35 - 10:35', '10:55 - 11:50', 
+  '08:30 - 09:30', '09:35 - 10:35', '10:50 - 11:50', 
   '11:55 - 12:55', '13:10 - 14:10', '14:30 - 15:30', 
   '15:35 - 16:35', '16:55 - 17:50', '17:55 - 18:55'
 ];
@@ -20,9 +18,13 @@ const PALETA = [
 ];
 
 function App() {
-  // ESTADOS
+  // --- ESTADOS ---
+  const [esMovil, setEsMovil] = useState(window.innerWidth < 768); // Detectar celular
+  const [menuMovilAbierto, setMenuMovilAbierto] = useState(false); // Para colapsar el menú en celular
+  
   const [modoOscuro, setModoOscuro] = useState(false); 
   const [usuario, setUsuario] = useState(null)
+  const [nombreUsuario, setNombreUsuario] = useState(null)
   const [emailInput, setEmailInput] = useState("")
   const [errorLogin, setErrorLogin] = useState("")
   const [catalogoRamos, setCatalogoRamos] = useState([])
@@ -31,7 +33,17 @@ function App() {
   const [horarioArmado, setHorarioArmado] = useState([])
   const [creditosTotales, setCreditosTotales] = useState(0)
 
-  // --- TEMA DE COLORES ---
+  // Referencia para la "Cámara Fantasma"
+  const tablaRef = useRef(null);
+
+  // --- DETECTOR DE TAMAÑO DE PANTALLA ---
+  useEffect(() => {
+    const handleResize = () => setEsMovil(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // --- TEMA ---
   const tema = {
     fondo: modoOscuro ? '#121212' : '#f0f2f5',
     sidebar: modoOscuro ? '#1e1e1e' : '#f8f9fa',
@@ -82,12 +94,18 @@ function App() {
     }
   }
 
-  function handleLogin(e) {
+  async function handleLogin(e) {
     e.preventDefault(); 
     if (!emailInput) { setErrorLogin("Escribe tu correo."); return; }
-    const esValido = DOMINIOS_PERMITIDOS.some(d => emailInput.toLowerCase().endsWith(d));
-    if (!esValido) { setErrorLogin(`Solo correos: ${DOMINIOS_PERMITIDOS.join(", ")}`); return; }
-    setUsuario(emailInput); setErrorLogin("");
+    const correoLimpio = emailInput.trim().toLowerCase();
+    const { data, error } = await supabase.from('lista_blanca').select('email, nombre').eq('email', correoLimpio).maybeSingle();
+
+    if (error) { setErrorLogin("Error de conexión."); return; }
+    if (!data) { setErrorLogin("⛔ Acceso denegado: No estás en la lista."); return; }
+
+    setUsuario(correoLimpio);
+    setNombreUsuario(data.nombre); 
+    setErrorLogin("");
   }
 
   function toggleSeleccionRamo(ramo) {
@@ -100,11 +118,12 @@ function App() {
     const ramosEnEstaCelda = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
     if (ramosEnEstaCelda.length >= 2) { alert("⚠️ Máximo 2 ramos."); return; }
     if (ramosEnEstaCelda.some(h => h.ramo.id === ramoSeleccionado.id)) return;
-
+    
+    // Validacion de creditos solo si es nuevo
     const yaEstaba = horarioArmado.some(h => h.ramo.id === ramoSeleccionado.id);
     if (!yaEstaba) {
-      if (creditosTotales + ramoSeleccionado.creditos > 30) { alert("⚠️ Tope de 30 créditos."); return; }
-      setCreditosTotales(creditosTotales + ramoSeleccionado.creditos);
+        if (creditosTotales + ramoSeleccionado.creditos > 30) { alert("⚠️ Tope de 30 créditos."); return; }
+        setCreditosTotales(creditosTotales + ramoSeleccionado.creditos);
     }
 
     const { data, error } = await supabase.from('mis_horarios').insert({ email: usuario, ramo_id: ramoSeleccionado.id, dia: dia, bloque: bloque }).select()
@@ -138,34 +157,63 @@ function App() {
     const libro = XLSX.utils.book_new();
     const hoja = XLSX.utils.json_to_sheet(datosTabla);
     XLSX.utils.book_append_sheet(libro, hoja, "Horario");
-    XLSX.writeFile(libro, `Horario_${usuario}.xlsx`);
+    XLSX.writeFile(libro, `Horario_${nombreUsuario || usuario}.xlsx`);
   }
 
+  // --- LA CÁMARA FANTASMA (TRUCO DE MAGIA) 📸 ---
   async function exportarImagen() {
-    const elemento = document.getElementById('horario-screenshot');
-    if (!elemento) return;
-    const canvas = await html2canvas(elemento, { scale: 2, backgroundColor: tema.tarjeta });
-    const link = document.createElement('a');
-    link.download = `Mi_Horario_${usuario}.png`;
-    link.href = canvas.toDataURL();
-    link.click();
+    const original = document.getElementById('horario-screenshot');
+    if (!original) return;
+
+    // 1. CLONAR: Creamos una copia exacta del horario
+    const clone = original.cloneNode(true);
+
+    // 2. FORZAR ESTILO DE ESCRITORIO AL CLON
+    // Lo hacemos invisible y lo pegamos en el cuerpo de la pagina
+    // Forzamos un ancho de 1300px para que los ramos no se vean aplastados
+    clone.style.position = 'fixed';
+    clone.style.top = '-9999px'; // Fuera de la pantalla
+    clone.style.left = '0';
+    clone.style.width = '1300px'; // ANCHO DE PC
+    clone.style.height = 'auto';
+    clone.style.overflow = 'visible'; // Que se vea todo hacia abajo
+    clone.style.zIndex = '-1';
+    clone.style.background = tema.tarjeta; // Fondo correcto
+    
+    document.body.appendChild(clone);
+
+    // 3. TOMAR FOTO AL CLON
+    // Esperamos un poco para que carguen los estilos
+    try {
+        const canvas = await html2canvas(clone, { 
+            scale: 2, // Alta calidad
+            backgroundColor: tema.tarjeta,
+            windowWidth: 1300, // Simulamos pantalla grande
+            useCORS: true
+        });
+
+        // 4. DESCARGAR
+        const link = document.createElement('a');
+        link.download = `Horario_${nombreUsuario || usuario}.png`;
+        link.href = canvas.toDataURL();
+        link.click();
+    } catch (err) {
+        console.error("Error al tomar foto:", err);
+        alert("Hubo un error al crear la imagen.");
+    } finally {
+        // 5. BORRAR LA EVIDENCIA (Eliminar el clon)
+        document.body.removeChild(clone);
+    }
   }
 
   const ramosFiltrados = catalogoRamos.filter(r => r.nombre.toLowerCase().includes(busqueda.toLowerCase()) || r.id.toLowerCase().includes(busqueda.toLowerCase()));
 
-  // --- VISTA LOGIN (FIX: PANTALLA COMPLETA) ---
+  // --- VISTA LOGIN ---
   if (!usuario) {
     return (
-      <div style={{ 
-        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
-        display: 'flex', justifyContent: 'center', alignItems: 'center',
-        background: tema.fondo, fontFamily: 'Segoe UI', transition: 'background 0.3s',
-        zIndex: 9999
-      }}>
-        <button onClick={() => setModoOscuro(!modoOscuro)} style={{ position: 'absolute', top: '20px', right: '20px', background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1.5rem', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>
-          {modoOscuro ? '☀️' : '🌙'}
-        </button>
-        <div style={{ background: tema.tarjeta, padding: '40px', borderRadius: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', width: '350px', textAlign: 'center', border: `1px solid ${tema.borde}` }}>
+      <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', background: tema.fondo, fontFamily: 'Segoe UI', transition: 'background 0.3s', zIndex: 9999 }}>
+        <button onClick={() => setModoOscuro(!modoOscuro)} style={{ position: 'absolute', top: '20px', right: '20px', background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1.5rem', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>{modoOscuro ? '☀️' : '🌙'}</button>
+        <div style={{ background: tema.tarjeta, padding: '40px', borderRadius: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', width: '350px', maxWidth: '90%', textAlign: 'center', border: `1px solid ${tema.borde}` }}>
           <h1 style={{ color: tema.texto, marginBottom: '10px' }}>🎓 Acceso Estudiantes</h1>
           <p style={{ color: tema.textoSecundario, marginBottom: '30px' }}>Tu horario se guardará automáticamente.</p>
           <form onSubmit={handleLogin}>
@@ -178,96 +226,116 @@ function App() {
     )
   }
 
-  // --- VISTA PLANIFICADOR (FIX: PANTALLA COMPLETA) ---
+  // --- VISTA PLANIFICADOR (RESPONSIVE) ---
   return (
     <div style={{ 
       display: 'flex', 
-      height: '100vh', 
-      width: '100vw',        // <--- FORZAMOS ANCHO TOTAL
-      maxWidth: 'none',      // <--- QUITAMOS EL LIMITE DE VITE
-      position: 'fixed',     // <--- ASEGURAMOS QUE OCUPE TODO
-      top: 0, 
-      left: 0,
-      margin: 0,
-      padding: 0,
-      fontFamily: 'Segoe UI', 
-      color: tema.texto, 
-      backgroundColor: tema.fondo, 
-      transition: 'background 0.3s' 
+      flexDirection: esMovil ? 'column' : 'row', // <--- CAMBIO CLAVE: Columna en movil, Fila en PC
+      height: '100vh', width: '100vw', 
+      maxWidth: 'none', position: 'fixed', top: 0, left: 0, margin: 0, padding: 0, 
+      fontFamily: 'Segoe UI', color: tema.texto, backgroundColor: tema.fondo, transition: 'background 0.3s' 
     }}>
       
-      {/* SIDEBAR */}
-      <div style={{ width: '300px', padding: '20px', background: tema.sidebar, borderRight: `1px solid ${tema.borde}`, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ marginBottom: '20px' }}>
-          <h2 style={{ margin: 0 }}>📚 Catálogo</h2>
-          <div style={{ fontSize: '0.8rem', color: tema.textoSecundario, marginTop: '5px' }}>
-            {usuario} <button onClick={() => setUsuario(null)} style={{ border: 'none', background: 'transparent', color: 'red', cursor: 'pointer', textDecoration: 'underline' }}>(Salir)</button>
-          </div>
-        </div>
+      {/* SIDEBAR / MENÚ SUPERIOR EN MÓVIL */}
+      <div style={{ 
+          width: esMovil ? '100%' : '300px', 
+          height: esMovil ? (menuMovilAbierto ? '50vh' : 'auto') : '100%', // Se achica o agranda en movil
+          padding: '20px', 
+          background: tema.sidebar, 
+          borderRight: esMovil ? 'none' : `1px solid ${tema.borde}`, 
+          borderBottom: esMovil ? `1px solid ${tema.borde}` : 'none',
+          display: 'flex', flexDirection: 'column', 
+          zIndex: 10,
+          transition: 'height 0.3s'
+        }}>
         
-        <input type="text" placeholder="Buscar ramo..." onChange={(e) => setBusqueda(e.target.value)} style={{ padding: '10px', marginBottom: '15px', borderRadius: '4px', border: `1px solid ${tema.borde}`, width: '100%', background: tema.inputFondo, color: tema.inputTexto }} />
-        <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {ramosFiltrados.map((ramo) => (
-            <div key={ramo.id} onClick={() => toggleSeleccionRamo(ramo)} style={{ padding: '10px', background: ramoSeleccionado?.id === ramo.id ? (modoOscuro ? '#0d47a1' : '#cce5ff') : tema.tarjeta, border: ramoSeleccionado?.id === ramo.id ? '2px solid #004085' : `1px solid ${tema.borde}`, borderRadius: '6px', cursor: 'pointer', userSelect: 'none' }}>
-              <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: ramoSeleccionado?.id === ramo.id ? 'white' : '#0056b3' }}>{ramo.id}</div>
-              <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{ramo.nombre}</div>
-              <div style={{ fontSize: '0.75rem', color: tema.textoSecundario }}>💎 {ramo.creditos} Créditos</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: esMovil ? '1.2rem' : '1.5rem' }}>👋 Hola, {nombreUsuario ? nombreUsuario.replace('.', ' ').split(" ")[0] : "Estudiante"}</h2>
+            <div style={{ fontSize: '0.8rem', color: tema.textoSecundario }}>
+              <button onClick={() => {setUsuario(null); setNombreUsuario(null);}} style={{ border: 'none', background: 'transparent', color: 'red', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>(Salir)</button>
             </div>
-          ))}
+          </div>
+          
+          {/* BOTÓN HAMBURGUESA SOLO EN MOVIL */}
+          {esMovil && (
+            <button onClick={() => setMenuMovilAbierto(!menuMovilAbierto)} style={{ background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1.2rem', padding: '5px 10px', borderRadius: '5px', color: tema.texto }}>
+              {menuMovilAbierto ? '▲' : '▼'} Catálogo
+            </button>
+          )}
+        </div>
+
+        {/* CONTENIDO DEL SIDEBAR (Se oculta en movil si está cerrado) */}
+        <div style={{ display: (esMovil && !menuMovilAbierto) ? 'none' : 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+          <input type="text" placeholder="Buscar ramo..." onChange={(e) => setBusqueda(e.target.value)} style={{ padding: '10px', marginBottom: '15px', borderRadius: '4px', border: `1px solid ${tema.borde}`, width: '100%', background: tema.inputFondo, color: tema.inputTexto }} />
+          <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {ramosFiltrados.map((ramo) => (
+              <div key={ramo.id} onClick={() => toggleSeleccionRamo(ramo)} style={{ padding: '10px', background: ramoSeleccionado?.id === ramo.id ? (modoOscuro ? '#0d47a1' : '#cce5ff') : tema.tarjeta, border: ramoSeleccionado?.id === ramo.id ? '2px solid #004085' : `1px solid ${tema.borde}`, borderRadius: '6px', cursor: 'pointer', userSelect: 'none' }}>
+                <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: ramoSeleccionado?.id === ramo.id ? 'white' : '#0056b3' }}>{ramo.id}</div>
+                <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{ramo.nombre}</div>
+                <div style={{ fontSize: '0.75rem', color: tema.textoSecundario }}>💎 {ramo.creditos} Créditos</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* ÁREA PRINCIPAL */}
-      <div style={{ flex: 1, padding: '20px', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '10px', borderBottom: `2px solid ${tema.borde}` }}>
-          <h1 style={{ margin: 0 }}>📅 Planificador</h1>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            <button onClick={() => setModoOscuro(!modoOscuro)} style={{ background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1.2rem', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>
-              {modoOscuro ? '☀️' : '🌙'}
-            </button>
-            <button onClick={limpiarTodo} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>🗑️</button>
-            <button onClick={exportarExcel} style={{ background: '#217346', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>📥 Excel</button>
-            <button onClick={exportarImagen} style={{ background: '#7b1fa2', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>📷 Foto</button>
-            <div style={{ padding: '8px 15px', background: creditosTotales > 30 ? '#dc3545' : '#28a745', color: 'white', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.9rem' }}>
-              {creditosTotales} / 30
-            </div>
+      <div style={{ flex: 1, padding: '10px', overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        
+        {/* BARRA DE HERRAMIENTAS SUPERIOR */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', paddingBottom: '10px', borderBottom: `2px solid ${tema.borde}`, gap: '10px' }}>
+          <h1 style={{ margin: 0, fontSize: esMovil ? '1.2rem' : '1.5rem' }}>📅</h1>
+          
+          <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap' }}>
+             <div style={{ padding: '5px 10px', background: creditosTotales > 30 ? '#dc3545' : '#28a745', color: 'white', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.8rem' }}>{creditosTotales}/30</div>
+             <button onClick={() => setModoOscuro(!modoOscuro)} style={{ background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1rem', padding: '5px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>{modoOscuro ? '☀️' : '🌙'}</button>
+             <button onClick={limpiarTodo} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>🗑️</button>
+             {/* En movil ocultamos Excel para ahorrar espacio, priorizamos Foto */}
+             {!esMovil && <button onClick={exportarExcel} style={{ background: '#217346', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>Excel</button>}
+             <button onClick={exportarImagen} style={{ background: '#7b1fa2', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>📷 Foto</button>
           </div>
         </div>
 
-        <div id="horario-screenshot" style={{ flex: 1, overflow: 'auto', background: tema.tarjeta, padding: '10px', borderRadius: '8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-            <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-              <tr>
-                <th style={{ background: tema.tablaHeader, padding: '12px', border: `1px solid ${tema.borde}`, color: tema.texto }}>Bloque</th>
-                {DIAS.map(d => <th key={d} style={{ background: tema.tablaHeader, padding: '12px', border: `1px solid ${tema.borde}`, width: '14%', color: tema.texto }}>{d}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {BLOQUES.map((bloque) => (
-                <tr key={bloque}>
-                  <td style={{ padding: '8px', border: `1px solid ${tema.borde}`, fontWeight: 'bold', textAlign: 'center', background: tema.bloqueLabel, color: tema.texto }}>{bloque}</td>
-                  {DIAS.map(dia => {
-                    const items = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
-                    return (
-                      <td key={dia} onClick={() => colocarEnCelda(dia, bloque)} style={{ border: `1px solid ${tema.borde}`, height: '85px', verticalAlign: 'top', padding: '4px', cursor: ramoSeleccionado ? 'cell' : 'default', background: items.length > 0 ? tema.tarjeta : 'transparent' }}>
-                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', height: '100%' }}>
-                          {items.map(item => (
-                            <div key={item.id_unico} style={{ background: obtenerColor(item.ramo.nombre), padding: '4px 6px', borderRadius: '4px', border: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'start', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
-                              <div style={{ overflow: 'hidden' }}>
-                                <div style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#444' }}>{item.ramo.id}</div>
-                                <div style={{ fontSize: '0.75rem', lineHeight: '1.1', color: '#222' }}>{item.ramo.nombre}</div>
-                              </div>
-                              <button onClick={(e) => { e.stopPropagation(); quitarDeCelda(item); }} style={{ background: 'transparent', border: 'none', color: '#444', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem', lineHeight: '0.5', padding: '0 0 0 4px' }}>×</button>
-                            </div>
-                          ))}
-                        </div>
-                      </td>
-                    )
-                  })}
+        {/* CONTENEDOR DE LA TABLA (SCROLL) */}
+        <div style={{ flex: 1, overflow: 'auto', background: tema.tarjeta, borderRadius: '8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', position: 'relative' }}>
+            
+          {/* DIV ESPECÍFICO PARA LA FOTO (Referencia ID) */}
+          <div id="horario-screenshot" style={{ minWidth: '800px', padding: '10px', background: tema.tarjeta }}> 
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                <tr>
+                  <th style={{ background: tema.tablaHeader, padding: '12px', border: `1px solid ${tema.borde}`, color: tema.texto, minWidth: '80px' }}>Bloque</th>
+                  {DIAS.map(d => <th key={d} style={{ background: tema.tablaHeader, padding: '12px', border: `1px solid ${tema.borde}`, width: '14%', color: tema.texto, minWidth: '100px' }}>{d}</th>)}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {BLOQUES.map((bloque) => (
+                  <tr key={bloque}>
+                    <td style={{ padding: '8px', border: `1px solid ${tema.borde}`, fontWeight: 'bold', textAlign: 'center', background: tema.bloqueLabel, color: tema.texto }}>{bloque}</td>
+                    {DIAS.map(dia => {
+                      const items = horarioArmado.filter(h => h.dia === dia && h.bloque === bloque);
+                      return (
+                        <td key={dia} onClick={() => colocarEnCelda(dia, bloque)} style={{ border: `1px solid ${tema.borde}`, height: '85px', verticalAlign: 'top', padding: '4px', cursor: ramoSeleccionado ? 'cell' : 'default', background: items.length > 0 ? tema.tarjeta : 'transparent' }}>
+                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', height: '100%' }}>
+                            {items.map(item => (
+                              <div key={item.id_unico} style={{ background: obtenerColor(item.ramo.nombre), padding: '4px 6px', borderRadius: '4px', border: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'start', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
+                                <div style={{ overflow: 'hidden' }}>
+                                  <div style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#444' }}>{item.ramo.id}</div>
+                                  <div style={{ fontSize: '0.75rem', lineHeight: '1.1', color: '#222' }}>{item.ramo.nombre}</div>
+                                </div>
+                                <button onClick={(e) => { e.stopPropagation(); quitarDeCelda(item); }} style={{ background: 'transparent', border: 'none', color: '#444', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem', lineHeight: '0.5', padding: '0 0 0 4px' }}>×</button>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
