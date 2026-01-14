@@ -121,7 +121,7 @@ function App() {
     
     const yaEstaba = horarioArmado.some(h => h.ramo.id === ramoSeleccionado.id);
     if (!yaEstaba) {
-        if (creditosTotales + ramoSeleccionado.creditos > 30) { alert("⚠️ Tope de 30 créditos."); return; }
+        if (creditosTotales + ramoSeleccionado.creditos > 40) { alert("⚠️ Tope de 30 créditos."); return; }
         setCreditosTotales(creditosTotales + ramoSeleccionado.creditos);
     }
 
@@ -308,7 +308,7 @@ function App() {
           <h1 style={{ margin: 0, fontSize: esMovil ? '1.2rem' : '1.5rem' }}>📅</h1>
           
           <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap' }}>
-             <div style={{ padding: '5px 10px', background: creditosTotales > 30 ? '#dc3545' : '#28a745', color: 'white', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.8rem' }}>{creditosTotales}/30</div>
+             <div style={{ padding: '5px 10px', background: creditosTotales > 40 ? '#dc3545' : '#28a745', color: 'white', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.8rem' }}>{creditosTotales}/40</div>
              <button onClick={() => setModoOscuro(!modoOscuro)} style={{ background: 'transparent', border: `1px solid ${tema.borde}`, fontSize: '1rem', padding: '5px', borderRadius: '6px', cursor: 'pointer', color: tema.texto }}>{modoOscuro ? '☀️' : '🌙'}</button>
              <button onClick={limpiarTodo} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>🗑️</button>
              {!esMovil && <button onClick={exportarExcel} style={{ background: '#217346', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>Excel</button>}
